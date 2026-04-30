@@ -26,13 +26,31 @@ print(f"LLM key status: {_key_status}")
 
 app = FastAPI(title="Oracle's Choice", version="0.1.0")
 
+# CORS: default allowlist covers local dev (localhost / 127.0.0.1 on any
+# port) and any Vercel preview / production domain. Override at deploy
+# time by setting CORS_ORIGIN_REGEX to a different Python regex (e.g.
+# r"^https://(oracle\.example\.com|.*\.vercel\.app)$"). allow_credentials
+# is False because no cookies are used; this also keeps the regex valid
+# under the CORS spec.
+_DEFAULT_CORS_ORIGIN_REGEX = (
+    r"^(https?://localhost(:\d+)?"
+    r"|https?://127\.0\.0\.1(:\d+)?"
+    r"|https://([a-z0-9-]+\.)*vercel\.app)$"
+)
+_CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX") or _DEFAULT_CORS_ORIGIN_REGEX
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+async def root() -> Dict[str, str]:
+    return {"status": "ok", "service": "oracle-choice-backend"}
 
 storage = Storage()
 agent = build_agent(storage)
