@@ -2,7 +2,9 @@
 import { useLanguage } from "./i18n/LanguageContext.jsx";
 import LanguageSwitcher from "./components/LanguageSwitcher.jsx";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://127.0.0.1:8001" : "https://oracle-s-choice.onrender.com");
 
 const createSession = (defaultTitle) => ({
   id: crypto.randomUUID(),
@@ -91,7 +93,7 @@ export default function App() {
 
     setIsSending(true);
     try {
-      const response = await fetch(`${API_URL}/chat`, {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
