@@ -10,13 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .agent.graph_agent import build_agent
-from .agent.llm_client import _filter_providers, PROVIDER_KEYS
+from .agent.llm_client import DEFAULT_PROVIDER_ORDER, _filter_providers, PROVIDER_KEYS
 from .storage.db import Storage
 
 
 load_dotenv(override=True)
 
-_enabled_providers = _filter_providers(["deepseek"])
+_enabled_providers = _filter_providers(DEFAULT_PROVIDER_ORDER)
 _key_status = {
     name: "SET" if os.getenv(env_key) else "MISSING"
     for name, env_key in PROVIDER_KEYS.items()

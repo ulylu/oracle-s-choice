@@ -1,10 +1,11 @@
 ﻿from __future__ import annotations
 
 import copy
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, TypedDict
 
-from spoon_ai.graph import StateGraph
+from ..spoonos_core.graph import StateGraph
 
 from ..divination.tarot import draw_tarot
 from ..divination.lenormand import draw_lenormand
@@ -22,6 +23,25 @@ CHAT_FALLBACK_BY_LANG = {
         "feeling or what happened?"
     ),
 }
+
+
+def _narration_max_tokens() -> int:
+    """Token budget for narration calls.
+
+    MiMo reasoning models (mimo-v2.5 etc.) tend to spend hundreds of
+    tokens on internal ``reasoning_content`` before they emit visible
+    ``content``. The default ``LLM_MAX_TOKENS=512`` is enough for the
+    parse / route classifiers, but for narration it routinely returns
+    ``finish_reason=length`` with empty ``content``. Bumping the budget
+    here (configurable via ``LLM_NARRATION_MAX_TOKENS``) lets the model
+    finish a real answer.
+    """
+    raw = os.getenv("LLM_NARRATION_MAX_TOKENS", "2048")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 2048
+    return min(max(value, 1), 8192)
 
 
 class WorkflowState(TypedDict, total=False):
@@ -63,7 +83,7 @@ TRACE_ORDER = ["parse", "route", "divination", "narration", "persist"]
 
 
 def build_agent(storage: Storage):
-    llm_client = LLMClient(providers=["deepseek"])
+    llm_client = LLMClient()
 
     async def parse_node(state: WorkflowState) -> Dict[str, Any]:
         input_snapshot = _trace_snapshot(state)
@@ -93,7 +113,6 @@ def build_agent(storage: Storage):
         ]
 
         payload = await llm_client.chat_json(messages, fallback=fallback)
-        provider_used = payload.get("_provider") if isinstance(payload, dict) else None
         intent = payload.get("intent", fallback_intent)
         if force_divination:
             intent = "divination"
@@ -110,8 +129,7 @@ def build_agent(storage: Storage):
             "need_clarification": bool(need_clarification),
             "lang": lang,
         }
-        if provider_used:
-            output["llm_provider"] = provider_used
+        _attach_llm_meta(output, payload)
         return _with_trace(state, "parse", input_snapshot, output, "ok")
 
     async def route_node(state: WorkflowState) -> Dict[str, Any]:
@@ -145,14 +163,12 @@ def build_agent(storage: Storage):
         ]
 
         payload = await llm_client.chat_json(messages, fallback={"tool": fallback_tool})
-        provider_used = payload.get("_provider") if isinstance(payload, dict) else None
         tool = payload.get("tool") if isinstance(payload, dict) else None
         if tool not in {"tarot", "lenormand", "liuyao"}:
             tool = fallback_tool
 
         output = {"tool": tool}
-        if provider_used:
-            output["llm_provider"] = provider_used
+        _attach_llm_meta(output, payload)
         return _with_trace(state, "route", input_snapshot, output, "ok")
 
     async def divination_node(state: WorkflowState) -> Dict[str, Any]:
@@ -248,14 +264,20 @@ def build_agent(storage: Storage):
                 },
             ]
 
-        payload = await llm_client.chat_json(messages, fallback={})
-        provider_used = payload.get("_provider") if isinstance(payload, dict) else None
+        payload = await llm_client.chat_json(
+            messages,
+            fallback={},
+            max_tokens=_narration_max_tokens(),
+        )
         message = payload.get("message") if isinstance(payload, dict) else None
         if not message and isinstance(payload, dict):
             raw = payload.get("_raw")
             if isinstance(raw, str) and raw.strip():
                 message = raw.strip()
+
+        narration_fallback_used = False
         if not message:
+            narration_fallback_used = True
             if intent == "chat":
                 message = CHAT_FALLBACK_BY_LANG.get(lang, CHAT_FALLBACK_BY_LANG["zh"])
             else:
@@ -264,8 +286,7 @@ def build_agent(storage: Storage):
                 )
 
         output = {"message": message, "lang": lang}
-        if provider_used:
-            output["llm_provider"] = provider_used
+        _attach_llm_meta(output, payload, success=not narration_fallback_used)
         return _with_trace(state, "narration", input_snapshot, output, "ok")
 
     async def persist_node(state: WorkflowState) -> Dict[str, Any]:
@@ -352,3 +373,28 @@ def _normalize_trace(trace: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _attach_llm_meta(output: Dict[str, Any], payload: Any, *, success: bool = True) -> None:
+    """Surface llm_provider / fallback_used / llm_debug in node trace output.
+
+    ``llm_provider`` is set ONLY when ``success=True`` AND the LLM client
+    returned a non-None ``_provider``. When every attempt failed, or the
+    caller is using a rule-based fallback for its primary output, the field
+    is intentionally omitted so the trace cannot be misread as a successful
+    live response. ``fallback_used`` is always emitted (true or false) so
+    the trace has an unambiguous flag. ``llm_debug`` is surfaced when
+    present so failures remain inspectable.
+    """
+    if not isinstance(payload, dict):
+        output["fallback_used"] = not success
+        return
+    debug = payload.get("_debug")
+    if debug:
+        output["llm_debug"] = debug
+    fallback_used = bool(payload.get("_fallback_used")) or not success
+    output["fallback_used"] = fallback_used
+    if success and not fallback_used:
+        provider_used = payload.get("_provider")
+        if provider_used:
+            output["llm_provider"] = provider_used

@@ -75,7 +75,14 @@ export default function App() {
   };
 
   const sendMessage = async (forceDivination = false) => {
-    const content = input.trim();
+    // The divination button must produce a request even when the textarea
+    // is empty; we seed a generic question in the active language so the
+    // payload is never empty. The plain Send button still no-ops on empty
+    // input.
+    let content = input.trim();
+    if (!content && forceDivination) {
+      content = t("divinationDefaultPrompt");
+    }
     if (!content || isSending) return;
 
     setInput("");
@@ -107,6 +114,10 @@ export default function App() {
         reading: data.reading,
       });
     } catch (error) {
+      // Surface the real error to the devtools console so production
+      // failures can still be diagnosed; the bubble shows a friendly
+      // localized fallback to the user.
+      console.error("Chat request failed:", error);
       appendMessage(activeSessionId, {
         role: "assistant",
         content: t("errorNetwork"),

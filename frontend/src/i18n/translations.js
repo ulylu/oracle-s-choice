@@ -59,6 +59,9 @@ const translations = {
     composerHint: "Shift + Enter 换行",
     composerSend: "发送",
     composerDivination: "占卜",
+    // Used as a seed question when the user clicks 占卜 with an empty
+    // textarea, so the request still has a non-empty `message` payload.
+    divinationDefaultPrompt: "请为我现在的处境占卜一下。",
 
     // Errors
     errorRequestFailed: "请求失败，请稍后再试",
@@ -100,6 +103,7 @@ const translations = {
     composerHint: "Shift + Enter for a new line",
     composerSend: "Send",
     composerDivination: "Divination",
+    divinationDefaultPrompt: "Please draw a divination for my current situation.",
 
     errorRequestFailed: "Request failed, please try again later.",
     errorNetwork: "The network is a bit unstable. Please try again in a moment.",
