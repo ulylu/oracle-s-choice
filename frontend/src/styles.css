@@ -324,6 +324,39 @@ body {
   color: var(--ink-soft);
 }
 
+.language-switcher {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff5e8;
+  padding: 3px;
+  gap: 2px;
+}
+
+.language-switcher-btn {
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.language-switcher-btn:hover:not(.active) {
+  color: var(--ink);
+}
+
+.language-switcher-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 10px var(--shadow);
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

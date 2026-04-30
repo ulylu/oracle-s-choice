@@ -1,21 +1,28 @@
 ﻿import { useMemo, useRef, useState, useEffect } from "react";
+import { useLanguage } from "./i18n/LanguageContext.jsx";
+import LanguageSwitcher from "./components/LanguageSwitcher.jsx";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
-const TOOL_LABELS = {
-  tarot: "塔罗",
-  lenormand: "雷诺曼",
-  liuyao: "六爻",
-};
-
-const createSession = () => ({
+const createSession = (defaultTitle) => ({
   id: crypto.randomUUID(),
-  title: "新的会话",
+  title: defaultTitle,
+  defaultTitle,
   createdAt: new Date().toISOString(),
 });
 
 export default function App() {
-  const initialSession = useMemo(() => createSession(), []);
+  const { lang, t } = useLanguage();
+
+  const initialSession = useMemo(
+    () => createSession(t("defaultSessionTitle")),
+    // We intentionally seed the very first session with whatever the
+    // language was at first render. Subsequent language switches only
+    // affect newly created sessions; existing sessions keep their
+    // original default title (tracked on `session.defaultTitle`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
   const [sessions, setSessions] = useState([initialSession]);
   const [activeSessionId, setActiveSessionId] = useState(initialSession.id);
   const [messagesBySession, setMessagesBySession] = useState({
@@ -27,13 +34,24 @@ export default function App() {
 
   const activeMessages = messagesBySession[activeSessionId] || [];
 
+  const toolLabel = (tool) => {
+    const map = {
+      tarot: t("toolTarot"),
+      lenormand: t("toolLenormand"),
+      liuyao: t("toolLiuyao"),
+    };
+    return map[tool] || tool;
+  };
+
+  const dateLocale = lang === "zh" ? "zh-CN" : "en-CA";
+
   useEffect(() => {
     if (!listRef.current) return;
     listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [activeMessages]);
 
   const handleNewSession = () => {
-    const next = createSession();
+    const next = createSession(t("defaultSessionTitle"));
     setSessions((prev) => [next, ...prev]);
     setMessagesBySession((prev) => ({ ...prev, [next.id]: [] }));
     setActiveSessionId(next.id);
@@ -42,7 +60,7 @@ export default function App() {
   const updateSessionTitle = (sessionId, message) => {
     setSessions((prev) =>
       prev.map((session) =>
-        session.id === sessionId && session.title === "新的会话"
+        session.id === sessionId && session.title === session.defaultTitle
           ? { ...session, title: message.slice(0, 12) }
           : session
       )
@@ -77,7 +95,7 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error("请求失败，请稍后再试");
+        throw new Error(t("errorRequestFailed"));
       }
 
       const data = await response.json();
@@ -91,7 +109,7 @@ export default function App() {
     } catch (error) {
       appendMessage(activeSessionId, {
         role: "assistant",
-        content: "网络暂时不稳定，请稍后再试。",
+        content: t("errorNetwork"),
       });
     } finally {
       setIsSending(false);
@@ -109,11 +127,12 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-title">问象</span>
-          <span className="brand-sub">Oracle's Choice</span>
+          <span className="brand-title">{t("brandTitle")}</span>
+          <span className="brand-sub">{t("brandSub")}</span>
         </div>
+        <LanguageSwitcher />
         <button className="primary-btn" onClick={handleNewSession}>
-          新建会话
+          {t("newSession")}
         </button>
         <div className="session-list">
           {sessions.map((session) => (
@@ -126,7 +145,7 @@ export default function App() {
             >
               <div className="session-title">{session.title}</div>
               <div className="session-time">
-                {new Date(session.createdAt).toLocaleDateString("zh-CN")}
+                {new Date(session.createdAt).toLocaleDateString(dateLocale)}
               </div>
             </button>
           ))}
@@ -136,17 +155,17 @@ export default function App() {
       <main className="chat-panel">
         <header className="chat-header">
           <div>
-            <h1>占问对话</h1>
-            <p>输入你的问题，系统将自动选择合适的占卜方式。</p>
+            <h1>{t("chatHeaderTitle")}</h1>
+            <p>{t("chatHeaderSubtitle")}</p>
           </div>
-          <div className="status-chip">在线 · SpoonOS Graph Agent</div>
+          <div className="status-chip">{t("statusChip")}</div>
         </header>
 
         <section className="message-list" ref={listRef}>
           {activeMessages.length === 0 ? (
             <div className="empty-state">
-              <h2>从一个问题开始</h2>
-              <p>例如：“这段感情还有机会吗？”</p>
+              <h2>{t("emptyStateTitle")}</h2>
+              <p>{t("emptyStateExample")}</p>
             </div>
           ) : (
             activeMessages.map((message, index) => (
@@ -156,27 +175,27 @@ export default function App() {
               >
                 <div className="bubble">
                   <div className="meta">
-                    {message.role === "assistant" ? "问象" : "我"}
+                    {message.role === "assistant" ? t("bubbleAssistant") : t("bubbleUser")}
                   </div>
                   <div className="content">{message.content}</div>
                   {message.role === "assistant" && message.tool && message.tool !== "chat" && (
                     <details className="detail-card">
-                      <summary>展开解读细节</summary>
+                      <summary>{t("detailToggle")}</summary>
                       <div className="detail-grid">
                         <div>
-                          <h4>使用的占卜工具</h4>
-                          <p>{TOOL_LABELS[message.tool] || message.tool}</p>
+                          <h4>{t("detailToolHeading")}</h4>
+                          <p>{toolLabel(message.tool)}</p>
                         </div>
                         {message.reading && (
                           <div>
-                            <h4>结构化结果</h4>
+                            <h4>{t("detailReadingHeading")}</h4>
                             <p>{message.reading.verdict}</p>
                           </div>
                         )}
                       </div>
                       {message.trace && (
                         <div className="trace-block">
-                          <h4>Agent 决策过程</h4>
+                          <h4>{t("detailTraceHeading")}</h4>
                           <pre>{JSON.stringify(message.trace, null, 2)}</pre>
                         </div>
                       )}
@@ -193,17 +212,17 @@ export default function App() {
             value={input}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="写下你的问题，按 Enter 发送"
+            placeholder={t("composerPlaceholder")}
             rows={3}
           />
           <div className="composer-actions">
-            <span className="hint">Shift + Enter 换行</span>
+            <span className="hint">{t("composerHint")}</span>
             <div className="composer-buttons">
               <button className="ghost-btn" onClick={() => sendMessage(false)} disabled={isSending}>
-                发送
+                {t("composerSend")}
               </button>
               <button className="primary-btn" onClick={() => sendMessage(true)} disabled={isSending}>
-                占卜
+                {t("composerDivination")}
               </button>
             </div>
           </div>

@@ -1,6 +1,8 @@
 ﻿# Oracle's Choice
 
-A SpoonOS Graph Agent–powered oracle app that can **chat empathetically** or **run divination** on demand. It supports multi‑LLM fallback (Gemini → OpenAI), stores session history, and exposes the full workflow trace (Input → Processing → Output).
+A SpoonOS Graph Agent–powered oracle app that can **chat empathetically** or **run divination** on demand. It uses **DeepSeek** as the LLM provider, stores session history, and exposes the full workflow trace (Input → Processing → Output).
+
+The UI and the assistant are **bilingual (中文 / English)**: pick a language in the sidebar, and the bot will reply in whatever language you write in.
 
 ---
 
@@ -21,7 +23,38 @@ A SpoonOS Graph Agent–powered oracle app that can **chat empathetically** or *
 - **Local divination** (tarot/lenormand/liuyao) for deterministic card draws.
 - **Context memory**: last 5 messages per session are injected into chat replies.
 - **Trace transparency**: full decision trace returned to UI (deduped to 5 nodes).
-- **Multi‑provider fallback**: Gemini first, OpenAI fallback.
+- **LLM provider**: DeepSeek (`deepseek-chat` by default). The `LLMClient` wrapper is provider-agnostic, but `backend/app/main.py` currently enables only DeepSeek.
+- **Bilingual UI**: instant `中文 / English` switch in the sidebar; choice persisted per browser.
+- **Bilingual chat**: the assistant replies in the same language as the user; mixed input follows the dominant language.
+
+---
+
+## 🌐 Bilingual Support
+
+Originally Chinese-only; both the UI and the chatbot now support English alongside Chinese.
+
+### UI
+
+- A `中文 / English` switcher sits in the sidebar.
+- Switching is instant. The choice is saved to `localStorage` under `oracle.lang`.
+- On first visit the browser language is used (`zh-*` → Chinese UI, `en-*` → English UI; otherwise Chinese).
+- The browser tab title and `<html lang>` follow the active language.
+- All translations live in `frontend/src/i18n/translations.js`. To add a new visible string, add the key to both the `zh` and `en` blocks and reference it via `t("key")`.
+
+### Chatbot reply language
+
+- Chinese input → Chinese reply.
+- English input → English reply.
+- Mixed input → the **dominant language** wins. CJK characters are weighted 3× to reflect their higher information density, so a short Chinese phrase mixed with a few English modifiers (e.g. `今天面试 a bit nervous`) stays Chinese, while an English sentence with a Chinese opener (e.g. `我感觉很 anxious about my interview tomorrow`) is treated as English.
+- Empty / punctuation-only / ambiguous input defaults to Chinese, preserving the original project behavior.
+- The assistant does **not** automatically translate the user's words. To get a translation, ask explicitly (e.g. *"Please translate this into English"* / *"请帮我翻译成英文"*).
+- Detection happens in `backend/app/agent/lang.py` (`detect_language`). The detected value is threaded through agent state and shown in the parse trace as `lang`.
+
+### Divination cards
+
+- Card data (Tarot / Lenormand / Liuyao) remains in Chinese as authentic source material.
+- The `narration` LLM rewrites verdict and advice into the user's language while preserving the reading's meaning.
+- If the LLM call fails, the rule-based fallback returns Chinese for Chinese sessions and English for English sessions; in the rare English-fallback path, embedded card terms may still appear in Chinese.
 
 ---
 
@@ -53,17 +86,26 @@ Oracle-s-Choice/
 ├── backend/
 │   ├── app/
 │   │   ├── agent/
-│   │   │   ├── graph_agent.py     # SpoonOS Graph Agent
+│   │   │   ├── graph_agent.py     # SpoonOS Graph Agent (language-aware prompts)
+│   │   │   ├── lang.py             # bilingual language detector (zh / en)
 │   │   │   ├── llm_client.py       # LLM wrapper with fallback
-│   │   │   └── nodes.py            # rules, keywords, intent detection
+│   │   │   └── nodes.py            # rules, keywords, bilingual fallback narration
 │   │   ├── divination/             # tarot / lenormand / liuyao
 │   │   ├── storage/                # sqlite persistence
 │   │   └── main.py                 # FastAPI entry
 │   ├── .env.example
 │   └── requirements.txt
 ├── frontend/
-│   ├── src/App.jsx
-│   ├── src/styles.css
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── components/
+│   │   │   └── LanguageSwitcher.jsx   # 中文 / English toggle
+│   │   ├── i18n/
+│   │   │   ├── LanguageContext.jsx    # provider, useLanguage(), t(...)
+│   │   │   └── translations.js        # zh / en dictionary
+│   │   ├── main.jsx
+│   │   └── styles.css
+│   ├── index.html
 │   ├── .env.example
 │   └── package.json
 └── README.md
@@ -115,12 +157,17 @@ Copy example:
 copy .env.example .env
 ```
 
-Fill in:
+The active LLM provider is **DeepSeek**, so the only key you must fill in is:
 ```
-GEMINI_API_KEY=your-gemini-key
-GEMINI_MODEL=gemini-2.5-flash
-OPENAI_API_KEY=your-openai-key
+DEEPSEEK_API_KEY=your-deepseek-key
 ```
+
+`backend/.env.example` also lists `OPENAI_API_KEY` and `GEMINI_API_KEY` as
+forward-compatible placeholders — leave them blank unless you also wire the
+extra provider into `backend/app/main.py` (currently it calls
+`_filter_providers(["deepseek"])`, so other keys are ignored at runtime).
+Optional tuning vars (`DEEPSEEK_MODEL`, `LLM_MAX_TOKENS`, `LLM_RETRIES`,
+`ORACLE_CHOICE_DB_PATH`) are documented in `backend/.env.example`.
 
 ---
 
@@ -237,9 +284,10 @@ Tables:
   pip install -e D:\VSCode\VSCodeProject\spoon-core
   ```
 
-### `Rate limit exceeded`
-- Gemini RPM too low
-- Add OpenAI fallback or change model to `gemini-2.5-flash-lite`
+### `Rate limit exceeded` / DeepSeek errors
+- Confirm `DEEPSEEK_API_KEY` is set and your DeepSeek account has quota.
+- Lower `LLM_MAX_TOKENS` or raise `LLM_RETRIES` in `.env`.
+- Optionally switch model via `DEEPSEEK_MODEL` (default `deepseek-chat`).
 
 ### Frontend not hitting backend
 - Ensure `frontend/.env` has correct `VITE_API_URL`
@@ -252,6 +300,23 @@ Tables:
 - Divination draws are **local and deterministic**.
 - LLM is used for **intent + routing + narration**.
 - Trace is always returned and displayed in UI for transparency.
+
+---
+
+## 🚢 Deployment Notes (Pre-Launch Checklist)
+
+This project is currently configured for **local development only**. The items below are *not yet implemented* — they are reminders for when you put the app on a public server.
+
+1. **CORS** — `backend/app/main.py` currently uses `allow_origins=["*"]`. Restrict it to your actual frontend domain(s) before going public.
+2. **API keys** — never commit `.env`. Provide `DEEPSEEK_API_KEY` (and any other provider keys you enable) only via environment variables on the server. `.env` and `.env.*` are already in `.gitignore`.
+3. **Persistent storage** — SQLite writes to `backend/oracle_choice.db`. In a container or PaaS, mount a persistent volume or set `ORACLE_CHOICE_DB_PATH` to a durable location so messages and traces survive restarts.
+4. **Rate limiting** — `/chat` triggers paid LLM calls on every request. Add a per-IP limit (e.g. Nginx `limit_req` or a library such as `slowapi`) before launch.
+5. **HTTPS / reverse proxy** — terminate TLS at Nginx or Caddy and proxy to `uvicorn` on `127.0.0.1:8001`. Run uvicorn with `--workers > 1` behind a process manager (systemd / supervisord / pm2).
+6. **Frontend build & host** — `npm run build` in `frontend/` produces `dist/`, which can be served by any static host (Nginx, Caddy, Vercel, Netlify, …). Set `VITE_API_URL` at build time to your public backend URL.
+7. **Logging** — the `print(...)` lines at startup in `backend/app/main.py` are fine for development; for production, switching to the `logging` module makes log capture in journald or container stdout cleaner. Optional.
+8. **Secrets in `.env.example`** — keep the example file empty of real values, even in private branches.
+
+None of the above is done in the current code. They are intentionally listed so they don't get forgotten during deployment.
 
 ---
 
@@ -343,7 +408,7 @@ parse → route → divination → narration → persist
 ## 5) SpoonOS 价值体现
 
 - **Graph Agent**：所有节点由 StateGraph 串联
-- **LLM Provider 统一管理**：Gemini 主用，OpenAI fallback
+- **LLM Provider 统一管理**：当前启用 DeepSeek（`backend/app/main.py` 中 `_filter_providers(["deepseek"])`）；`LLMClient` 包装层与提供商无关，未来可在同一处加入 OpenAI / Gemini 等回退
 - **可解释性**：trace 完整返回
 - **拓展性**：未来可新增“自定义占卜流派”或“工具节点”
 

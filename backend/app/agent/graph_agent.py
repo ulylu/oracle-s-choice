@@ -10,8 +10,18 @@ from ..divination.tarot import draw_tarot
 from ..divination.lenormand import draw_lenormand
 from ..divination.liuyao import cast_liuyao
 from ..storage.db import Storage
+from .lang import detect_language
 from .llm_client import LLMClient
 from .nodes import detect_intent, fallback_narration, parse_question, rule_route
+
+
+CHAT_FALLBACK_BY_LANG = {
+    "zh": "我在这里听你说。可以多告诉我一些你的感受或发生了什么吗？",
+    "en": (
+        "I'm here to listen. Could you share a bit more about how you're "
+        "feeling or what happened?"
+    ),
+}
 
 
 class WorkflowState(TypedDict, total=False):
@@ -30,6 +40,7 @@ class WorkflowState(TypedDict, total=False):
     history: List[Dict[str, Any]]
     trace: List[Dict[str, Any]]
     persisted: bool
+    lang: str
 
 
 TRACE_KEYS = [
@@ -45,6 +56,7 @@ TRACE_KEYS = [
     "verdict",
     "advice",
     "message",
+    "lang",
 ]
 
 TRACE_ORDER = ["parse", "route", "divination", "narration", "persist"]
@@ -57,6 +69,7 @@ def build_agent(storage: Storage):
         input_snapshot = _trace_snapshot(state)
         question = state.get("question", "")
         force_divination = bool(state.get("force_divination"))
+        lang = detect_language(question)
 
         fallback = parse_question(question)
         fallback_intent = "divination" if force_divination else detect_intent(question)
@@ -95,6 +108,7 @@ def build_agent(storage: Storage):
             "domain": domain,
             "tone": tone,
             "need_clarification": bool(need_clarification),
+            "lang": lang,
         }
         if provider_used:
             output["llm_provider"] = provider_used
@@ -178,6 +192,7 @@ def build_agent(storage: Storage):
         advice = state.get("advice", [])
         tone = state.get("tone", "direct")
         need_clarification = state.get("need_clarification", False)
+        lang = state.get("lang") or detect_language(question)
 
         if intent == "chat":
             history = storage.get_recent_messages(state.get("session_id", ""), limit=5)
@@ -186,7 +201,12 @@ def build_agent(storage: Storage):
                     "role": "system",
                     "content": (
                         "You are a warm, supportive companion. "
-                        "Respond naturally in Chinese, keep it concise, and follow the user's tone."
+                        "Always reply in the SAME language as the user's most recent message: "
+                        "Chinese if they write in Chinese, English if they write in English. "
+                        "For mixed-language input, follow the dominant language. "
+                        "Do NOT translate the user's words back to them; just answer naturally. "
+                        "Keep the response concise and match the user's tone. "
+                        f"Detected user language for this turn: {lang}."
                     ),
                 }
             ]
@@ -201,8 +221,17 @@ def build_agent(storage: Storage):
                 {
                     "role": "system",
                     "content": (
-                        "You are an oracle narrator. Compose a concise response. "
-                        "Return JSON only: {\"message\": string}."
+                        "You are an oracle narrator. Compose a concise response that "
+                        "explains the divination result and relates it to the question. "
+                        "Always reply in the SAME language as the user's question: "
+                        "Chinese for Chinese questions, English for English questions, "
+                        "dominant language for mixed input. "
+                        "Preserve the authentic divination style and meaning regardless of the "
+                        "response language. The Verdict and Advice provided below are written in "
+                        "Chinese; render their meaning into the response language naturally "
+                        "without inventing new symbols. "
+                        "Return JSON only: {\"message\": string}. "
+                        f"Detected user language for this turn: {lang}."
                     ),
                 },
                 {
@@ -214,7 +243,7 @@ def build_agent(storage: Storage):
                         f"Advice: {advice}\n"
                         f"Tone: {tone}\n"
                         f"Need clarification: {need_clarification}\n"
-                        "Explain the result clearly and relate it to the question in Chinese."
+                        "Explain the result clearly and relate it to the question."
                     ),
                 },
             ]
@@ -228,11 +257,13 @@ def build_agent(storage: Storage):
                 message = raw.strip()
         if not message:
             if intent == "chat":
-                message = "我在这里听你说。可以多告诉我一些你的感受或发生了什么吗？"
+                message = CHAT_FALLBACK_BY_LANG.get(lang, CHAT_FALLBACK_BY_LANG["zh"])
             else:
-                message = fallback_narration(tool, verdict, advice, tone, need_clarification)
+                message = fallback_narration(
+                    tool, verdict, advice, tone, need_clarification, lang=lang
+                )
 
-        output = {"message": message}
+        output = {"message": message, "lang": lang}
         if provider_used:
             output["llm_provider"] = provider_used
         return _with_trace(state, "narration", input_snapshot, output, "ok")

@@ -3,6 +3,9 @@
 **/.env
 .env.*
 **/.env.*
+# allow committed example env templates (no real secrets)
+!.env.example
+!**/.env.example
 
 # python
 __pycache__/
